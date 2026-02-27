@@ -7,7 +7,8 @@ use flow_engine::{ActionType, DynamicValue, ExecutionContext, FlowGraph, FlowNod
 use iced::widget::{button, column, container, pin, row, stack, text};
 use iced::{Color, Element, Fill, Task, Theme, border};
 use node_editor::{
-    ActionKind, ConnectionKind, NodeId, NodeKind, PortKind, PortSide, StartInputId, StartTrigger,
+    ACTION_KIND_OPTIONS, ActionKind, ConnectionKind, NodeId, NodeKind, PortKind, PortSide,
+    START_TRIGGER_OPTIONS, StartInputId, StartTrigger, VariableValueType,
 };
 
 fn main() -> iced::Result {
@@ -33,6 +34,8 @@ enum Message {
     Editor(node_editor::EditorEvent),
     ContextAction(node_editor::ContextAction),
     VariableDrop(node_editor::VariableDropOption),
+    StartTriggerSelected(NodeId, StartTrigger),
+    ActionKindSelected(NodeId, ActionKind),
     RunFlow,
 }
 
@@ -50,6 +53,12 @@ impl NodeEditorDemo {
             Message::Editor(event) => self.editor.on_event(event),
             Message::ContextAction(action) => self.editor.apply_context_action(action),
             Message::VariableDrop(option) => self.editor.apply_variable_drop_option(option),
+            Message::StartTriggerSelected(node_id, trigger) => {
+                self.editor.apply_start_trigger(node_id, trigger)
+            }
+            Message::ActionKindSelected(node_id, action_kind) => {
+                self.editor.apply_action_kind(node_id, action_kind)
+            }
             Message::RunFlow => self.run_flow(),
         }
 
@@ -60,7 +69,7 @@ impl NodeEditorDemo {
         let header = container(
             row![
                 text(
-                    "Drag nodes and ports. Click Start trigger / rows or Action kind in-node. Right click blank space for free nodes. Wheel zoom; drag blank space to pan."
+                    "Drag nodes and ports. Click trigger/action chips for dropdown options, drag start-input rows to reorder, click output panel rows to cycle targets, right-click blank space for free nodes."
                 )
                 .size(14),
                 text(self.editor.status()).size(14),
@@ -95,6 +104,24 @@ impl NodeEditorDemo {
         if let Some(menu) = &self.editor.variable_drop_menu {
             layers.push(
                 pin(self.variable_drop_menu())
+                    .x(menu.position.x)
+                    .y(menu.position.y)
+                    .into(),
+            );
+        }
+
+        if let Some(menu) = &self.editor.start_trigger_menu {
+            layers.push(
+                pin(self.start_trigger_menu(menu.node))
+                    .x(menu.position.x)
+                    .y(menu.position.y)
+                    .into(),
+            );
+        }
+
+        if let Some(menu) = &self.editor.action_kind_menu {
+            layers.push(
+                pin(self.action_kind_menu(menu.node))
                     .x(menu.position.x)
                     .y(menu.position.y)
                     .into(),
@@ -150,6 +177,56 @@ impl NodeEditorDemo {
                     .width(1)
                     .color(Color::from_rgb8(0x4A, 0x59, 0x71)),
                 text_color: Some(Color::from_rgb8(0xF0, 0xF6, 0xFF)),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    fn start_trigger_menu(&self, node_id: NodeId) -> Element<'_, Message> {
+        let mut content = column![].spacing(6);
+
+        for trigger in START_TRIGGER_OPTIONS {
+            content = content.push(
+                button(trigger.label())
+                    .width(Fill)
+                    .on_press(Message::StartTriggerSelected(node_id, trigger)),
+            );
+        }
+
+        container(content)
+            .padding(10)
+            .width(200)
+            .style(|_| container::Style {
+                background: Some(Color::from_rgb8(0x1F, 0x27, 0x35).into()),
+                border: border::rounded(10)
+                    .width(1)
+                    .color(Color::from_rgb8(0x47, 0x56, 0x6F)),
+                text_color: Some(Color::from_rgb8(0xE7, 0xEE, 0xFA)),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    fn action_kind_menu(&self, node_id: NodeId) -> Element<'_, Message> {
+        let mut content = column![].spacing(6);
+
+        for action_kind in ACTION_KIND_OPTIONS {
+            content = content.push(
+                button(action_kind.label())
+                    .width(Fill)
+                    .on_press(Message::ActionKindSelected(node_id, action_kind)),
+            );
+        }
+
+        container(content)
+            .padding(10)
+            .width(190)
+            .style(|_| container::Style {
+                background: Some(Color::from_rgb8(0x1F, 0x27, 0x35).into()),
+                border: border::rounded(10)
+                    .width(1)
+                    .color(Color::from_rgb8(0x47, 0x56, 0x6F)),
+                text_color: Some(Color::from_rgb8(0xE7, 0xEE, 0xFA)),
                 ..container::Style::default()
             })
             .into()
@@ -211,7 +288,7 @@ impl NodeEditorDemo {
         {
             let outgoing = self.outgoing_action_targets(node.id, PortKind::Primary);
             let action = self.action_from_node(node, &outgoing);
-            let next_node = if node.action_kind == ActionKind::Branch {
+            let next_node = if matches!(node.action_kind, ActionKind::Branch | ActionKind::Match) {
                 None
             } else {
                 outgoing.first().map(|target| target.to_string())
@@ -317,8 +394,8 @@ impl NodeEditorDemo {
                 let value = node
                     .variables
                     .first()
-                    .map(|item| DynamicValue::String(item.label.clone()))
-                    .unwrap_or_else(|| DynamicValue::String(node.title.clone()));
+                    .map(dynamic_value_from_handle)
+                    .unwrap_or(DynamicValue::Null);
 
                 ActionType::SetVariable { key, value }
             }
@@ -349,6 +426,30 @@ impl NodeEditorDemo {
                 true_next_node: outgoing.first().map(|node_id| node_id.to_string()),
                 false_next_node: outgoing.get(1).map(|node_id| node_id.to_string()),
             },
+            ActionKind::Match => {
+                let match_variable = node
+                    .variables
+                    .first()
+                    .map(|item| sanitize_identifier(&item.label, "match_value", true))
+                    .unwrap_or_else(|| "match_value".to_owned());
+
+                let branch_targets = outgoing.len().saturating_sub(1);
+                let mut arms = Vec::with_capacity(branch_targets);
+                for index in 0..branch_targets {
+                    let value = node
+                        .variables
+                        .get(index + 1)
+                        .map(dynamic_value_from_handle)
+                        .unwrap_or(DynamicValue::Integer(index as i64));
+                    arms.push((value, outgoing[index].to_string()));
+                }
+
+                ActionType::Match {
+                    match_variable,
+                    arms,
+                    default_next_node: outgoing.last().map(|node_id| node_id.to_string()),
+                }
+            }
             ActionKind::ApiRequest => ActionType::ApiRequest {
                 url: format!(
                     "https://api.example.com/{}",
@@ -386,6 +487,26 @@ fn sanitize_identifier(input: &str, fallback: &str, strict_identifier: bool) -> 
         fallback.to_owned()
     } else {
         cleaned.to_owned()
+    }
+}
+
+fn dynamic_value_from_handle(handle: &node_editor::NodeVariable) -> DynamicValue {
+    let seed = handle.label.clone();
+    match handle.value_type {
+        VariableValueType::Null => DynamicValue::Null,
+        VariableValueType::Bool => DynamicValue::Bool(true),
+        VariableValueType::Integer => DynamicValue::Integer(1),
+        VariableValueType::Float => DynamicValue::Float(1.0),
+        VariableValueType::String => DynamicValue::String(seed),
+        VariableValueType::Char => DynamicValue::Char(seed.chars().next().unwrap_or('x')),
+        VariableValueType::Bytes => DynamicValue::Bytes(seed.into_bytes()),
+        VariableValueType::List => DynamicValue::List(vec![DynamicValue::String(seed)]),
+        VariableValueType::Object => DynamicValue::Object(HashMap::from([(
+            "value".to_owned(),
+            DynamicValue::String(seed),
+        )])),
+        VariableValueType::Error => DynamicValue::Error(seed),
+        VariableValueType::Timestamp => DynamicValue::Timestamp(1),
     }
 }
 
@@ -607,5 +728,130 @@ mod tests {
 
         let (graph, _) = demo.build_graph().expect("graph should build");
         assert_eq!(graph.start_node_id, Some(promote_to_action.to_string()));
+    }
+
+    #[test]
+    fn set_variable_action_uses_selected_dynamic_value_type() {
+        let mut demo = NodeEditorDemo::new();
+        let action_id = demo
+            .editor
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Action)
+            .map(|node| node.id)
+            .expect("action node");
+
+        if let Some(action_node) = demo
+            .editor
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == action_id)
+        {
+            action_node.action_kind = ActionKind::SetVariable;
+            action_node.variables.clear();
+            action_node.variables.push(node_editor::NodeVariable {
+                id: 900,
+                label: "count".to_owned(),
+                y_offset: 60.0,
+                value_type: VariableValueType::Integer,
+            });
+        }
+
+        let outgoing = demo.outgoing_action_targets(action_id, PortKind::Primary);
+        let action = demo.action_from_node(
+            demo.editor
+                .nodes
+                .iter()
+                .find(|node| node.id == action_id)
+                .expect("action node"),
+            &outgoing,
+        );
+
+        match action {
+            ActionType::SetVariable { key, value } => {
+                assert_eq!(key, "count");
+                assert_eq!(value, DynamicValue::Integer(1));
+            }
+            other => panic!("unexpected action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn match_action_kind_builds_match_action_type() {
+        let mut demo = NodeEditorDemo::new();
+        let action_id = demo
+            .editor
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Action)
+            .map(|node| node.id)
+            .expect("action node");
+        let second_action = demo
+            .editor
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Variable)
+            .map(|node| node.id)
+            .expect("second node");
+
+        if let Some(action_node) = demo
+            .editor
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == action_id)
+        {
+            action_node.action_kind = ActionKind::Match;
+            action_node.variables.push(node_editor::NodeVariable {
+                id: 901,
+                label: "mode".to_owned(),
+                y_offset: 60.0,
+                value_type: VariableValueType::String,
+            });
+            action_node.variables.push(node_editor::NodeVariable {
+                id: 902,
+                label: "admin".to_owned(),
+                y_offset: 86.0,
+                value_type: VariableValueType::String,
+            });
+        }
+
+        if let Some(second) = demo
+            .editor
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == second_action)
+        {
+            second.kind = NodeKind::Action;
+            second.title = "Fallback".to_owned();
+        }
+
+        demo.editor.connections.push(node_editor::Connection {
+            from: node_editor::PortRef {
+                node: action_id,
+                side: PortSide::Output,
+                kind: PortKind::Primary,
+            },
+            to: node_editor::PortRef {
+                node: second_action,
+                side: PortSide::Input,
+                kind: PortKind::Primary,
+            },
+            kind: ConnectionKind::Flow,
+        });
+
+        let outgoing = demo.outgoing_action_targets(action_id, PortKind::Primary);
+        let action = demo.action_from_node(
+            demo.editor
+                .nodes
+                .iter()
+                .find(|node| node.id == action_id)
+                .expect("action node"),
+            &outgoing,
+        );
+
+        match action {
+            ActionType::Match { .. } => {}
+            other => panic!("unexpected action: {other:?}"),
+        }
     }
 }

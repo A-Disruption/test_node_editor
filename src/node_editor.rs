@@ -22,6 +22,10 @@ const VARIABLE_SLOT_SPACING: f32 = 26.0;
 const START_HEADER_HEIGHT: f32 = 38.0;
 const START_INPUT_HEIGHT: f32 = 32.0;
 const START_ADD_INPUT_HEIGHT: f32 = 30.0;
+const START_OUTPUT_PANEL_GAP: f32 = 12.0;
+const START_OUTPUT_PANEL_ROW_HEIGHT: f32 = 28.0;
+const START_OUTPUT_PANEL_HEADER_HEIGHT: f32 = 24.0;
+const START_OUTPUT_PANEL_EXTRA_WIDTH: f32 = 58.0;
 const MIN_ZOOM: f32 = 0.35;
 const MAX_ZOOM: f32 = 2.6;
 const MINIMAP_WIDTH: f32 = 160.0;
@@ -32,27 +36,40 @@ const MINIMAP_MARGIN: f32 = 16.0;
 pub enum StartTrigger {
     #[default]
     Manual,
+    OnAppLoad,
     OnViewEnter,
     OnButtonPress,
+    OnInputChange,
+    OnSubmit,
+    OnTimer,
+    OnWebhook,
 }
 
 impl StartTrigger {
     pub fn label(self) -> &'static str {
         match self {
             Self::Manual => "Manual",
+            Self::OnAppLoad => "On App Load",
             Self::OnViewEnter => "On View Enter",
             Self::OnButtonPress => "On Button Press",
-        }
-    }
-
-    fn next(self) -> Self {
-        match self {
-            Self::Manual => Self::OnViewEnter,
-            Self::OnViewEnter => Self::OnButtonPress,
-            Self::OnButtonPress => Self::Manual,
+            Self::OnInputChange => "On Input Change",
+            Self::OnSubmit => "On Submit",
+            Self::OnTimer => "On Timer",
+            Self::OnWebhook => "On Webhook",
         }
     }
 }
+
+pub const START_TRIGGER_OPTIONS: [StartTrigger; 8] = [
+    StartTrigger::Manual,
+    StartTrigger::OnAppLoad,
+    StartTrigger::OnViewEnter,
+    StartTrigger::OnButtonPress,
+    StartTrigger::OnInputChange,
+    StartTrigger::OnSubmit,
+    StartTrigger::OnTimer,
+    StartTrigger::OnWebhook,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ActionKind {
@@ -62,6 +79,7 @@ pub enum ActionKind {
     SetVariable,
     Add,
     Branch,
+    Match,
     ApiRequest,
 }
 
@@ -73,18 +91,85 @@ impl ActionKind {
             Self::SetVariable => "Set Variable",
             Self::Add => "Add",
             Self::Branch => "Branch",
+            Self::Match => "Match",
             Self::ApiRequest => "API Request",
+        }
+    }
+}
+
+pub const ACTION_KIND_OPTIONS: [ActionKind; 7] = [
+    ActionKind::NavigateToView,
+    ActionKind::ShowModal,
+    ActionKind::SetVariable,
+    ActionKind::Add,
+    ActionKind::Branch,
+    ActionKind::Match,
+    ActionKind::ApiRequest,
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VariableValueType {
+    Null,
+    Bool,
+    Integer,
+    Float,
+    #[default]
+    String,
+    Char,
+    Bytes,
+    List,
+    Object,
+    Error,
+    Timestamp,
+}
+
+impl VariableValueType {
+    #[allow(dead_code)]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Null => "Null",
+            Self::Bool => "Bool",
+            Self::Integer => "Integer",
+            Self::Float => "Float",
+            Self::String => "String",
+            Self::Char => "Char",
+            Self::Bytes => "Bytes",
+            Self::List => "List",
+            Self::Object => "Object",
+            Self::Error => "Error",
+            Self::Timestamp => "Timestamp",
+        }
+    }
+
+    fn short_label(self) -> &'static str {
+        match self {
+            Self::Null => "N",
+            Self::Bool => "B",
+            Self::Integer => "I64",
+            Self::Float => "F64",
+            Self::String => "Str",
+            Self::Char => "Ch",
+            Self::Bytes => "Bin",
+            Self::List => "Vec",
+            Self::Object => "Obj",
+            Self::Error => "Err",
+            Self::Timestamp => "Ts",
         }
     }
 
     fn next(self) -> Self {
         match self {
-            Self::NavigateToView => Self::ShowModal,
-            Self::ShowModal => Self::SetVariable,
-            Self::SetVariable => Self::Add,
-            Self::Add => Self::Branch,
-            Self::Branch => Self::ApiRequest,
-            Self::ApiRequest => Self::NavigateToView,
+            Self::Null => Self::Bool,
+            Self::Bool => Self::Integer,
+            Self::Integer => Self::Float,
+            Self::Float => Self::String,
+            Self::String => Self::Char,
+            Self::Char => Self::Bytes,
+            Self::Bytes => Self::List,
+            Self::List => Self::Object,
+            Self::Object => Self::Error,
+            Self::Error => Self::Timestamp,
+            Self::Timestamp => Self::Null,
         }
     }
 }
@@ -156,6 +241,7 @@ pub struct NodeVariable {
     pub id: VariableHandleId,
     pub label: String,
     pub y_offset: f32,
+    pub value_type: VariableValueType,
 }
 
 impl Node {
@@ -263,10 +349,10 @@ impl Node {
         (self.kind == NodeKind::Start).then(|| {
             Rectangle::new(
                 Point::new(
-                    self.position.x + self.size().width - 102.0,
+                    self.position.x + self.size().width - 138.0,
                     self.position.y + 8.0,
                 ),
-                Size::new(90.0, 22.0),
+                Size::new(126.0, 22.0),
             )
         })
     }
@@ -308,10 +394,10 @@ impl Node {
         (self.kind == NodeKind::Action).then(|| {
             Rectangle::new(
                 Point::new(
-                    self.position.x + self.size().width - 108.0,
+                    self.position.x + self.size().width - 126.0,
                     self.position.y + 8.0,
                 ),
-                Size::new(94.0, 22.0),
+                Size::new(112.0, 22.0),
             )
         })
     }
@@ -320,6 +406,14 @@ impl Node {
         Rectangle::new(
             Point::new(self.position.x + 16.0, self.position.y + variable.y_offset),
             Size::new(VARIABLE_SLOT_WIDTH, VARIABLE_SLOT_HEIGHT),
+        )
+    }
+
+    fn variable_type_bounds(&self, variable: &NodeVariable) -> Rectangle {
+        let bounds = self.variable_bounds(variable);
+        Rectangle::new(
+            Point::new(bounds.x + bounds.width - 40.0, bounds.y + 2.0),
+            Size::new(36.0, bounds.height - 4.0),
         )
     }
 
@@ -465,6 +559,18 @@ pub struct VariableDropMenu {
     pub context: VariableDropContext,
 }
 
+#[derive(Debug, Clone)]
+pub struct StartTriggerMenu {
+    pub position: Point,
+    pub node: NodeId,
+}
+
+#[derive(Debug, Clone)]
+pub struct ActionKindMenu {
+    pub position: Point,
+    pub node: NodeId,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HitTarget {
     NodeBody(NodeId),
@@ -472,9 +578,17 @@ pub enum HitTarget {
         node: NodeId,
         variable: VariableHandleId,
     },
+    VariableType {
+        node: NodeId,
+        variable: VariableHandleId,
+    },
     StartTrigger(NodeId),
     StartAddInput(NodeId),
     StartInputRow {
+        node: NodeId,
+        input: StartInputId,
+    },
+    StartOutputRow {
         node: NodeId,
         input: StartInputId,
     },
@@ -521,6 +635,11 @@ pub enum DragState {
         variable: VariableHandleId,
         grab_offset_y: f32,
     },
+    StartInputRow {
+        node: NodeId,
+        input: StartInputId,
+        grab_offset_y: f32,
+    },
     Connection {
         from: PortRef,
         current: Point,
@@ -543,6 +662,8 @@ pub struct EditorState {
     pub drag: DragState,
     pub context_menu: Option<ContextMenu>,
     pub variable_drop_menu: Option<VariableDropMenu>,
+    pub start_trigger_menu: Option<StartTriggerMenu>,
+    pub action_kind_menu: Option<ActionKindMenu>,
     pub zoom: f32,
     pub pan: Vector,
     pub viewport: Size,
@@ -599,6 +720,8 @@ impl EditorState {
             drag: DragState::None,
             context_menu: None,
             variable_drop_menu: None,
+            start_trigger_menu: None,
+            action_kind_menu: None,
             zoom: 1.0,
             pan: Vector::new(0.0, 0.0),
             viewport: Size::new(1280.0, 800.0),
@@ -611,7 +734,7 @@ impl EditorState {
             from: PortRef {
                 node: 1,
                 side: PortSide::Output,
-                kind: PortKind::Primary,
+                kind: PortKind::StartInput(1),
             },
             to: PortRef {
                 node: 2,
@@ -654,6 +777,19 @@ impl EditorState {
     }
 
     pub fn hit_test(&self, point: Point) -> HitTarget {
+        if let Some(start_node) = self.selected_start_node() {
+            for input in &start_node.start_inputs {
+                if let Some(row_bounds) = self.start_output_row_bounds(start_node.id, input.id)
+                    && row_bounds.contains(point)
+                {
+                    return HitTarget::StartOutputRow {
+                        node: start_node.id,
+                        input: input.id,
+                    };
+                }
+            }
+        }
+
         for node in self.nodes.iter().rev() {
             if node.kind == NodeKind::Start {
                 if let Some(trigger_bounds) = node.start_trigger_bounds()
@@ -711,6 +847,13 @@ impl EditorState {
                     return HitTarget::OutputPort(variable_port);
                 }
 
+                if node.variable_type_bounds(variable).contains(point) {
+                    return HitTarget::VariableType {
+                        node: node.id,
+                        variable: variable.id,
+                    };
+                }
+
                 if node.variable_bounds(variable).contains(point) {
                     return HitTarget::VariableChip {
                         node: node.id,
@@ -753,6 +896,8 @@ impl EditorState {
         let Some(menu) = self.context_menu.take() else {
             return;
         };
+        self.start_trigger_menu = None;
+        self.action_kind_menu = None;
 
         let position =
             self.screen_to_world(menu.position) + Vector::new(16.0 / self.zoom, -12.0 / self.zoom);
@@ -763,6 +908,26 @@ impl EditorState {
         };
 
         self.selected_node = Some(new_id);
+    }
+
+    pub fn apply_start_trigger(&mut self, node_id: NodeId, trigger: StartTrigger) {
+        self.start_trigger_menu = None;
+        if let Some(node) = self.node_mut(node_id)
+            && node.kind == NodeKind::Start
+        {
+            node.start_trigger = trigger;
+            self.selected_node = Some(node_id);
+        }
+    }
+
+    pub fn apply_action_kind(&mut self, node_id: NodeId, action_kind: ActionKind) {
+        self.action_kind_menu = None;
+        if let Some(node) = self.node_mut(node_id)
+            && node.kind == NodeKind::Action
+        {
+            node.action_kind = action_kind;
+            self.selected_node = Some(node_id);
+        }
     }
 
     pub fn variable_drop_options(&self) -> &'static [VariableDropOption] {
@@ -777,6 +942,8 @@ impl EditorState {
         let Some(menu) = self.variable_drop_menu.take() else {
             return;
         };
+        self.start_trigger_menu = None;
+        self.action_kind_menu = None;
 
         match menu.context {
             VariableDropContext::Existing(target_node) => {
@@ -880,6 +1047,21 @@ impl EditorState {
                 }
                 self.normalize_variable_positions(node);
             }
+            DragState::StartInputRow {
+                node,
+                input,
+                grab_offset_y,
+            } => {
+                let Some(node_position) = self.node(node).map(|current| current.position) else {
+                    return;
+                };
+                let position_world = self.screen_to_world(position_screen);
+                let local_top =
+                    position_world.y - node_position.y - START_HEADER_HEIGHT - grab_offset_y;
+                let target_index =
+                    ((local_top + START_INPUT_HEIGHT * 0.5) / START_INPUT_HEIGHT).floor() as isize;
+                self.reorder_start_input_to_index(node, input, target_index);
+            }
             DragState::Connection { from, .. } => {
                 let position_world = self.screen_to_world(position_screen);
                 self.drag = DragState::Connection {
@@ -902,6 +1084,8 @@ impl EditorState {
         self.cursor_world = self.screen_to_world(position_screen);
         self.context_menu = None;
         self.variable_drop_menu = None;
+        self.start_trigger_menu = None;
+        self.action_kind_menu = None;
 
         if let Some(minimap_bounds) = self.minimap_bounds()
             && minimap_bounds.contains(position_screen)
@@ -916,9 +1100,20 @@ impl EditorState {
 
         match self.hit_test(position_world) {
             HitTarget::StartTrigger(node_id) => {
-                if let Some(node) = self.node_mut(node_id) {
-                    node.start_trigger = node.start_trigger.next();
-                }
+                let menu_position = self
+                    .node(node_id)
+                    .and_then(Node::start_trigger_bounds)
+                    .map(|bounds| {
+                        self.world_to_screen(Point::new(
+                            bounds.x,
+                            bounds.y + bounds.height + 4.0 / self.zoom,
+                        ))
+                    })
+                    .unwrap_or(position_screen);
+                self.start_trigger_menu = Some(StartTriggerMenu {
+                    position: menu_position,
+                    node: node_id,
+                });
                 self.selected_node = Some(node_id);
                 self.drag = DragState::None;
             }
@@ -928,17 +1123,48 @@ impl EditorState {
                 self.drag = DragState::None;
             }
             HitTarget::StartInputRow { node, input } => {
-                if let Some(target_node) = self.node_mut(node) {
+                if let Some(target_node) = self.node_mut(node)
+                    && let Some(bounds) = target_node.start_input_bounds(input)
+                {
                     target_node.active_start_input = Some(input);
+                    self.drag = DragState::StartInputRow {
+                        node,
+                        input,
+                        grab_offset_y: position_world.y - bounds.y,
+                    };
+                } else {
+                    self.drag = DragState::None;
                 }
+                self.selected_node = Some(node);
+            }
+            HitTarget::StartOutputRow { node, input } => {
+                self.cycle_start_output_target(node, input);
                 self.selected_node = Some(node);
                 self.drag = DragState::None;
             }
             HitTarget::ActionKind(node_id) => {
-                if let Some(node) = self.node_mut(node_id) {
-                    node.action_kind = node.action_kind.next();
-                }
+                let menu_position = self
+                    .node(node_id)
+                    .and_then(Node::action_kind_bounds)
+                    .map(|bounds| {
+                        self.world_to_screen(Point::new(
+                            bounds.x,
+                            bounds.y + bounds.height + 4.0 / self.zoom,
+                        ))
+                    })
+                    .unwrap_or(position_screen);
+                self.action_kind_menu = Some(ActionKindMenu {
+                    position: menu_position,
+                    node: node_id,
+                });
                 self.selected_node = Some(node_id);
+                self.drag = DragState::None;
+            }
+            HitTarget::VariableType { node, variable } => {
+                if let Some(variable_ref) = self.variable_mut(node, variable) {
+                    variable_ref.value_type = variable_ref.value_type.next();
+                }
+                self.selected_node = Some(node);
                 self.drag = DragState::None;
             }
             HitTarget::OutputPort(port) => {
@@ -997,6 +1223,7 @@ impl EditorState {
                 self.on_connection_drop(from, self.screen_to_world(position_screen))
             }
             DragState::VariableChip { node, .. } => self.normalize_variable_positions(node),
+            DragState::StartInputRow { .. } => {}
             DragState::None
             | DragState::Node { .. }
             | DragState::Pan { .. }
@@ -1009,6 +1236,8 @@ impl EditorState {
         self.cursor_world = self.screen_to_world(position_screen);
         self.drag = DragState::None;
         self.variable_drop_menu = None;
+        self.start_trigger_menu = None;
+        self.action_kind_menu = None;
 
         match self.hit_test(self.screen_to_world(position_screen)) {
             HitTarget::Blank => {
@@ -1019,9 +1248,11 @@ impl EditorState {
             }
             HitTarget::NodeBody(node_id)
             | HitTarget::VariableChip { node: node_id, .. }
+            | HitTarget::VariableType { node: node_id, .. }
             | HitTarget::StartTrigger(node_id)
             | HitTarget::StartAddInput(node_id)
             | HitTarget::StartInputRow { node: node_id, .. }
+            | HitTarget::StartOutputRow { node: node_id, .. }
             | HitTarget::ActionKind(node_id)
             | HitTarget::InputPort(PortRef { node: node_id, .. })
             | HitTarget::OutputPort(PortRef { node: node_id, .. }) => {
@@ -1084,6 +1315,12 @@ impl EditorState {
     fn connect(&mut self, from: PortRef, to: PortRef, kind: ConnectionKind) {
         if from.node == to.node {
             return;
+        }
+
+        if kind == ConnectionKind::Flow && matches!(from.kind, PortKind::StartInput(_)) {
+            self.connections.retain(|existing| {
+                !(existing.kind == ConnectionKind::Flow && existing.from == from)
+            });
         }
 
         if !self
@@ -1166,6 +1403,7 @@ impl EditorState {
             id: handle_id,
             label: format!("{source_title}.{suffix}"),
             y_offset,
+            value_type: VariableValueType::default(),
         });
         self.normalize_variable_positions(target_node);
         Some(handle_id)
@@ -1197,6 +1435,170 @@ impl EditorState {
             .iter()
             .find(|variable| variable.id == variable_id)?;
         Some(node.variable_bounds(variable))
+    }
+
+    #[allow(dead_code)]
+    fn variable_type_bounds(
+        &self,
+        node_id: NodeId,
+        variable_id: VariableHandleId,
+    ) -> Option<Rectangle> {
+        let node = self.node(node_id)?;
+        let variable = node
+            .variables
+            .iter()
+            .find(|variable| variable.id == variable_id)?;
+        Some(node.variable_type_bounds(variable))
+    }
+
+    fn selected_start_node(&self) -> Option<&Node> {
+        let selected = self.selected_node?;
+        self.node(selected)
+            .filter(|node| node.kind == NodeKind::Start)
+    }
+
+    fn start_output_panel_bounds(&self, node: &Node) -> Rectangle {
+        let width = node.size().width + START_OUTPUT_PANEL_EXTRA_WIDTH;
+        let height = START_OUTPUT_PANEL_HEADER_HEIGHT
+            + node.start_inputs.len() as f32 * START_OUTPUT_PANEL_ROW_HEIGHT
+            + 10.0;
+
+        Rectangle::new(
+            Point::new(
+                node.position.x,
+                node.position.y + node.size().height + START_OUTPUT_PANEL_GAP,
+            ),
+            Size::new(width, height),
+        )
+    }
+
+    fn start_output_row_bounds(
+        &self,
+        node_id: NodeId,
+        input_id: StartInputId,
+    ) -> Option<Rectangle> {
+        let node = self.node(node_id)?;
+        if node.kind != NodeKind::Start {
+            return None;
+        }
+        let index = node
+            .start_inputs
+            .iter()
+            .position(|input| input.id == input_id)?;
+        let panel = self.start_output_panel_bounds(node);
+
+        Some(Rectangle::new(
+            Point::new(
+                panel.x + 8.0,
+                panel.y
+                    + START_OUTPUT_PANEL_HEADER_HEIGHT
+                    + index as f32 * START_OUTPUT_PANEL_ROW_HEIGHT,
+            ),
+            Size::new(panel.width - 16.0, START_OUTPUT_PANEL_ROW_HEIGHT - 2.0),
+        ))
+    }
+
+    fn start_output_target(&self, node_id: NodeId, input_id: StartInputId) -> Option<NodeId> {
+        self.connections.iter().find_map(|connection| {
+            (connection.kind == ConnectionKind::Flow
+                && connection.from.node == node_id
+                && connection.from.side == PortSide::Output
+                && connection.from.kind == PortKind::StartInput(input_id)
+                && connection.to.side == PortSide::Input
+                && connection.to.kind == PortKind::Primary
+                && self
+                    .node(connection.to.node)
+                    .is_some_and(|node| node.kind == NodeKind::Action))
+            .then_some(connection.to.node)
+        })
+    }
+
+    fn set_start_output_target(
+        &mut self,
+        node_id: NodeId,
+        input_id: StartInputId,
+        target: Option<NodeId>,
+    ) {
+        self.connections.retain(|connection| {
+            !(connection.kind == ConnectionKind::Flow
+                && connection.from.node == node_id
+                && connection.from.side == PortSide::Output
+                && connection.from.kind == PortKind::StartInput(input_id))
+        });
+
+        let Some(target_node) = target else {
+            return;
+        };
+        if self
+            .node(target_node)
+            .is_none_or(|node| node.kind != NodeKind::Action)
+        {
+            return;
+        }
+
+        if let Some(input) = self.input_port(target_node) {
+            self.connect(
+                PortRef {
+                    node: node_id,
+                    side: PortSide::Output,
+                    kind: PortKind::StartInput(input_id),
+                },
+                input,
+                ConnectionKind::Flow,
+            );
+        }
+    }
+
+    fn cycle_start_output_target(&mut self, node_id: NodeId, input_id: StartInputId) {
+        let mut options = vec![None];
+        options.extend(
+            self.nodes
+                .iter()
+                .filter(|node| node.kind == NodeKind::Action)
+                .map(|node| Some(node.id)),
+        );
+        if options.is_empty() {
+            return;
+        }
+
+        let current = self.start_output_target(node_id, input_id);
+        let current_index = options
+            .iter()
+            .position(|candidate| *candidate == current)
+            .unwrap_or(0);
+        let next = options[(current_index + 1) % options.len()];
+        self.set_start_output_target(node_id, input_id, next);
+    }
+
+    fn reorder_start_input_to_index(
+        &mut self,
+        node_id: NodeId,
+        input_id: StartInputId,
+        target_index: isize,
+    ) {
+        let Some(node) = self.node_mut(node_id) else {
+            return;
+        };
+        let len = node.start_inputs.len();
+        if len < 2 {
+            return;
+        }
+
+        let Some(current_index) = node
+            .start_inputs
+            .iter()
+            .position(|input| input.id == input_id)
+        else {
+            return;
+        };
+        let target_index = target_index.clamp(0, (len - 1) as isize) as usize;
+        if current_index == target_index {
+            return;
+        }
+
+        let input = node.start_inputs.remove(current_index);
+        node.start_inputs.insert(target_index, input);
+        node.active_start_input = Some(input_id);
     }
 
     fn input_port(&self, node_id: NodeId) -> Option<PortRef> {
@@ -1461,6 +1863,8 @@ impl<Message> canvas::Program<Message> for EditorProgram<'_, Message> {
             for node in &self.state.nodes {
                 draw_node(self.state, node, frame);
             }
+
+            draw_start_output_panel(self.state, frame);
         });
         draw_minimap(&mut frame, self.state);
 
@@ -1487,16 +1891,19 @@ impl<Message> canvas::Program<Message> for EditorProgram<'_, Message> {
         match self.state.drag {
             DragState::Node { .. } => mouse::Interaction::Grabbing,
             DragState::VariableChip { .. } => mouse::Interaction::Grabbing,
+            DragState::StartInputRow { .. } => mouse::Interaction::Grabbing,
             DragState::Connection { .. } => mouse::Interaction::Crosshair,
             DragState::Pan { .. } => mouse::Interaction::Grabbing,
             DragState::Minimap { .. } => mouse::Interaction::Grabbing,
             DragState::None => match self.state.hit_test(local_world) {
                 HitTarget::NodeBody(_) => mouse::Interaction::Grab,
                 HitTarget::VariableChip { .. } => mouse::Interaction::Grab,
-                HitTarget::StartInputRow { .. } => mouse::Interaction::Pointer,
+                HitTarget::StartInputRow { .. } => mouse::Interaction::Grab,
                 HitTarget::StartTrigger(_)
                 | HitTarget::StartAddInput(_)
-                | HitTarget::ActionKind(_) => mouse::Interaction::Pointer,
+                | HitTarget::StartOutputRow { .. }
+                | HitTarget::ActionKind(_)
+                | HitTarget::VariableType { .. } => mouse::Interaction::Pointer,
                 HitTarget::InputPort(_) | HitTarget::OutputPort(_) => mouse::Interaction::Pointer,
                 HitTarget::Blank => mouse::Interaction::default(),
             },
@@ -1611,6 +2018,83 @@ fn draw_minimap(frame: &mut canvas::Frame, state: &EditorState) {
             ..canvas::Stroke::default()
         },
     );
+}
+
+fn draw_start_output_panel(state: &EditorState, frame: &mut canvas::Frame) {
+    let Some(node) = state.selected_start_node() else {
+        return;
+    };
+    let panel_bounds = state.start_output_panel_bounds(node);
+    let panel = canvas::Path::rounded_rectangle(
+        panel_bounds.position(),
+        panel_bounds.size(),
+        border::Radius::from(10.0),
+    );
+
+    frame.fill(&panel, Color::from_rgba8(0x1B, 0x23, 0x31, 0.96));
+    frame.stroke(
+        &panel,
+        canvas::Stroke {
+            width: 1.2,
+            style: canvas::Style::Solid(Color::from_rgb8(0x4A, 0x58, 0x6F)),
+            ..canvas::Stroke::default()
+        },
+    );
+
+    frame.fill_text(canvas::Text {
+        content: "Outputs".to_owned(),
+        position: Point::new(panel_bounds.x + 12.0, panel_bounds.y + 16.0),
+        color: Color::from_rgb8(0xD9, 0xE2, 0xF1),
+        size: 12.0.into(),
+        ..canvas::Text::default()
+    });
+
+    for input in &node.start_inputs {
+        let Some(row_bounds) = state.start_output_row_bounds(node.id, input.id) else {
+            continue;
+        };
+        let current_target = state
+            .start_output_target(node.id, input.id)
+            .and_then(|target_id| state.node(target_id))
+            .map(|target| target.title.clone())
+            .unwrap_or_else(|| "(None)".to_owned());
+        let active = node.active_start_input == Some(input.id);
+
+        let row = canvas::Path::rounded_rectangle(
+            row_bounds.position(),
+            row_bounds.size(),
+            border::Radius::from(6.0),
+        );
+        frame.fill(
+            &row,
+            if active {
+                Color::from_rgb8(0x2B, 0x38, 0x4A)
+            } else {
+                Color::from_rgb8(0x24, 0x2E, 0x3D)
+            },
+        );
+        frame.stroke(
+            &row,
+            canvas::Stroke {
+                width: 1.0,
+                style: canvas::Style::Solid(if active {
+                    Color::from_rgb8(0x62, 0xA8, 0xFF)
+                } else {
+                    Color::from_rgb8(0x3C, 0x48, 0x5B)
+                }),
+                ..canvas::Stroke::default()
+            },
+        );
+
+        frame.fill_text(canvas::Text {
+            content: format!("{} -> {}", input.label, current_target),
+            position: Point::new(row_bounds.x + 10.0, row_bounds.center_y()),
+            align_y: alignment::Vertical::Center,
+            color: Color::from_rgb8(0xD7, 0xE0, 0xEF),
+            size: 11.5.into(),
+            ..canvas::Text::default()
+        });
+    }
 }
 
 fn draw_connections(state: &EditorState, frame: &mut canvas::Frame) {
@@ -2110,6 +2594,31 @@ fn draw_node(state: &EditorState, node: &Node, frame: &mut canvas::Frame) {
             ..canvas::Text::default()
         });
 
+        let type_bounds = node.variable_type_bounds(variable);
+        let type_chip = canvas::Path::rounded_rectangle(
+            type_bounds.position(),
+            type_bounds.size(),
+            border::Radius::from(4.0),
+        );
+        frame.fill(&type_chip, Color::from_rgb8(0x39, 0x47, 0x5D));
+        frame.stroke(
+            &type_chip,
+            canvas::Stroke {
+                width: 1.0,
+                style: canvas::Style::Solid(Color::from_rgb8(0x5C, 0x6C, 0x87)),
+                ..canvas::Stroke::default()
+            },
+        );
+        frame.fill_text(canvas::Text {
+            content: variable.value_type.short_label().to_owned(),
+            position: Point::new(type_bounds.center_x(), type_bounds.center_y()),
+            align_x: text::Alignment::Center,
+            align_y: alignment::Vertical::Center,
+            color: Color::from_rgb8(0xE2, 0xE9, 0xF8),
+            size: 10.0.into(),
+            ..canvas::Text::default()
+        });
+
         let output_anchor = node.variable_output_anchor(variable);
         draw_output_port(
             frame,
@@ -2193,6 +2702,15 @@ mod tests {
             .expect("action node should exist")
     }
 
+    fn start_node(state: &EditorState) -> NodeId {
+        state
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Start)
+            .map(|node| node.id)
+            .expect("start node should exist")
+    }
+
     #[test]
     fn right_click_blank_opens_context_menu() {
         let mut state = EditorState::new_demo();
@@ -2222,6 +2740,229 @@ mod tests {
             .last()
             .expect("newly created node should be present");
         assert_eq!(created.kind, NodeKind::Action);
+    }
+
+    #[test]
+    fn start_trigger_click_opens_menu_and_apply_changes_value() {
+        let mut state = EditorState::new_demo();
+        let start_id = start_node(&state);
+        let trigger_center = state
+            .node(start_id)
+            .and_then(Node::start_trigger_bounds)
+            .map(|bounds| Point::new(bounds.center_x(), bounds.center_y()))
+            .expect("trigger bounds should exist");
+
+        state.on_event(left_pressed(trigger_center));
+
+        assert_eq!(
+            state.start_trigger_menu.as_ref().map(|menu| menu.node),
+            Some(start_id)
+        );
+        state.apply_start_trigger(start_id, StartTrigger::OnSubmit);
+        assert_eq!(
+            state.node(start_id).map(|node| node.start_trigger),
+            Some(StartTrigger::OnSubmit)
+        );
+        assert!(state.start_trigger_menu.is_none());
+    }
+
+    #[test]
+    fn start_input_rows_can_be_reordered_by_drag() {
+        let mut state = EditorState::new_demo();
+        let start_id = start_node(&state);
+        let initial = state
+            .node(start_id)
+            .map(|node| {
+                node.start_inputs
+                    .iter()
+                    .map(|input| input.id)
+                    .collect::<Vec<_>>()
+            })
+            .expect("start node");
+        assert!(initial.len() >= 2);
+
+        let first_id = initial[0];
+        let second_id = initial[1];
+        let first_row = state
+            .node(start_id)
+            .and_then(|node| node.start_input_bounds(first_id))
+            .expect("first row");
+        let second_row = state
+            .node(start_id)
+            .and_then(|node| node.start_input_bounds(second_id))
+            .expect("second row");
+
+        let start_drag = Point::new(first_row.center_x(), first_row.center_y());
+        let drag_to = Point::new(start_drag.x, second_row.center_y() + 2.0);
+
+        state.on_event(left_pressed(start_drag));
+        state.on_event(pointer_moved(drag_to));
+        state.on_event(left_released(drag_to));
+
+        let reordered = state
+            .node(start_id)
+            .map(|node| {
+                node.start_inputs
+                    .iter()
+                    .map(|input| input.id)
+                    .collect::<Vec<_>>()
+            })
+            .expect("start node");
+        assert_eq!(reordered[0], second_id);
+        assert_eq!(reordered[1], first_id);
+    }
+
+    #[test]
+    fn start_output_panel_click_cycles_output_target_for_input() {
+        let mut state = EditorState::new_demo();
+        let start_id = start_node(&state);
+        let first_input = state
+            .node(start_id)
+            .and_then(|node| node.start_inputs.first().map(|input| input.id))
+            .expect("first input");
+        let second_action = state.add_node(NodeKind::Action, Point::new(760.0, 110.0));
+        state.selected_node = Some(start_id);
+
+        let row_center = state
+            .start_output_row_bounds(start_id, first_input)
+            .map(|bounds| Point::new(bounds.center_x(), bounds.center_y()))
+            .expect("start output panel row");
+
+        let before = state.start_output_target(start_id, first_input);
+        state.on_event(left_pressed(row_center));
+        let first_target = state.start_output_target(start_id, first_input);
+        assert_ne!(before, first_target);
+
+        state.on_event(left_pressed(row_center));
+        let second_target = state.start_output_target(start_id, first_input);
+        assert_ne!(first_target, second_target);
+        assert!(
+            second_target.is_none()
+                || second_target == Some(action_node(&state))
+                || second_target == Some(second_action)
+        );
+    }
+
+    #[test]
+    fn action_kind_click_opens_menu_and_apply_changes_value() {
+        let mut state = EditorState::new_demo();
+        let action_id = action_node(&state);
+        let action_kind_center = state
+            .node(action_id)
+            .and_then(Node::action_kind_bounds)
+            .map(|bounds| Point::new(bounds.center_x(), bounds.center_y()))
+            .expect("action kind bounds");
+
+        state.on_event(left_pressed(action_kind_center));
+
+        assert_eq!(
+            state.action_kind_menu.as_ref().map(|menu| menu.node),
+            Some(action_id)
+        );
+        state.apply_action_kind(action_id, ActionKind::Match);
+        let selected_kind = state
+            .node(action_id)
+            .map(|node| node.action_kind)
+            .expect("action node");
+        assert_eq!(selected_kind, ActionKind::Match);
+        assert!(state.action_kind_menu.is_none());
+    }
+
+    #[test]
+    fn start_input_connection_replacement_keeps_single_target() {
+        let mut state = EditorState::new_demo();
+        let start_id = start_node(&state);
+        let input_id = state
+            .node(start_id)
+            .and_then(|node| node.start_inputs.first().map(|input| input.id))
+            .expect("start input");
+        let other_action = state.add_node(NodeKind::Action, Point::new(900.0, 140.0));
+
+        let first_input = state
+            .input_port(action_node(&state))
+            .expect("first action input");
+        let second_input = state.input_port(other_action).expect("second action input");
+        let from = PortRef {
+            node: start_id,
+            side: PortSide::Output,
+            kind: PortKind::StartInput(input_id),
+        };
+
+        state.connect(from, first_input, ConnectionKind::Flow);
+        state.connect(from, second_input, ConnectionKind::Flow);
+
+        let outgoing = state
+            .connections
+            .iter()
+            .filter(|connection| {
+                connection.kind == ConnectionKind::Flow
+                    && connection.from.node == start_id
+                    && connection.from.kind == PortKind::StartInput(input_id)
+            })
+            .count();
+
+        assert_eq!(outgoing, 1);
+    }
+
+    #[test]
+    fn start_output_panel_detects_hit_when_selected() {
+        let mut state = EditorState::new_demo();
+        let start_id = start_node(&state);
+        let input_id = state
+            .node(start_id)
+            .and_then(|node| node.start_inputs.first().map(|input| input.id))
+            .expect("input");
+
+        state.selected_node = Some(start_id);
+        let row_center = state
+            .start_output_row_bounds(start_id, input_id)
+            .map(|bounds| Point::new(bounds.center_x(), bounds.center_y()))
+            .expect("row bounds");
+
+        assert_eq!(
+            state.hit_test(row_center),
+            HitTarget::StartOutputRow {
+                node: start_id,
+                input: input_id
+            }
+        );
+    }
+
+    #[test]
+    fn variable_type_hit_target_detects_badge() {
+        let mut state = EditorState::new_demo();
+        let variable_id = variable_node(&state);
+        let action_id = action_node(&state);
+        let origin = state
+            .output_port(variable_id)
+            .and_then(|port| state.anchor(port))
+            .expect("variable output anchor");
+        let target = state
+            .input_port(action_id)
+            .and_then(|port| state.anchor(port))
+            .expect("action input anchor");
+
+        state.on_event(left_pressed(origin));
+        state.on_event(pointer_moved(target));
+        state.on_event(left_released(target));
+        state.apply_variable_drop_option(VariableDropOption::SetInput);
+
+        let handle_id = state
+            .node(action_id)
+            .and_then(|node| node.variables.first().map(|variable| variable.id))
+            .expect("variable handle");
+        let badge_center = state
+            .variable_type_bounds(action_id, handle_id)
+            .map(|bounds| Point::new(bounds.center_x(), bounds.center_y()))
+            .expect("badge");
+
+        assert_eq!(
+            state.hit_test(badge_center),
+            HitTarget::VariableType {
+                node: action_id,
+                variable: handle_id
+            }
+        );
     }
 
     #[test]
@@ -2395,5 +3136,44 @@ mod tests {
             .expect("moved variable handle");
 
         assert!(moved.y_offset > variable.y_offset);
+    }
+
+    #[test]
+    fn variable_type_badge_cycles_dynamic_value_type() {
+        let mut state = EditorState::new_demo();
+        let variable_id = variable_node(&state);
+        let action_id = action_node(&state);
+        let origin = state
+            .output_port(variable_id)
+            .and_then(|port| state.anchor(port))
+            .expect("variable output anchor");
+        let target = state
+            .input_port(action_id)
+            .and_then(|port| state.anchor(port))
+            .expect("action input anchor");
+
+        state.on_event(left_pressed(origin));
+        state.on_event(pointer_moved(target));
+        state.on_event(left_released(target));
+        state.apply_variable_drop_option(VariableDropOption::SetInput);
+
+        let (variable_handle_id, before_kind) = state
+            .node(action_id)
+            .and_then(|node| node.variables.first())
+            .map(|variable| (variable.id, variable.value_type))
+            .expect("variable handle");
+        let badge_center = state
+            .variable_type_bounds(action_id, variable_handle_id)
+            .map(|bounds| Point::new(bounds.center_x(), bounds.center_y()))
+            .expect("variable type badge");
+
+        state.on_event(left_pressed(badge_center));
+
+        let after_kind = state
+            .node(action_id)
+            .and_then(|node| node.variables.first())
+            .map(|variable| variable.value_type)
+            .expect("variable handle");
+        assert_ne!(before_kind, after_kind);
     }
 }
